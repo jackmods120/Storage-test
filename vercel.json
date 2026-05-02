@@ -1,9 +1,10 @@
 {
   "version": 2,
   "functions": {
-    "api/upload.js": { "maxDuration": 60, "memory": 1024 },
-    "api/media.js":  { "maxDuration": 30, "memory": 512 },
-    "api/posts.js":  { "maxDuration": 10 },
-    "api/like.js":   { "maxDuration": 10 }
+    "api/upload.js":            { "maxDuration": 60,  "memory": 1024 },
+    "api/upload-multipart.js":  { "maxDuration": 300, "memory": 1024 },
+    "api/media.js":             { "maxDuration": 30,  "memory": 512  },
+    "api/posts.js":             { "maxDuration": 10  },
+    "api/like.js":              { "maxDuration": 10  }
   }
 }
