@@ -12,7 +12,6 @@ module.exports = async function handler(req, res) {
   try {
     const { fetch } = await import('undici');
 
-    // file_path وەرگرتن لە Telegram
     const infoRes  = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${id}`);
     const infoData = await infoRes.json();
 
@@ -21,13 +20,11 @@ module.exports = async function handler(req, res) {
     const filePath = infoData.result.file_path;
     const fileUrl  = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`;
 
-    // بۆ ڤیدیۆ: ڕیدایرێکت
     if (redirect === '1') {
       res.setHeader('Cache-Control', 'public, max-age=3600');
       return res.redirect(302, fileUrl);
     }
 
-    // بۆ وێنە: proxy
     const fileRes = await fetch(fileUrl);
     if (!fileRes.ok) return res.status(502).json({ error: 'Fetch failed' });
 
