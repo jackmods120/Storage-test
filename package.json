@@ -2,5 +2,7 @@
   "name": "jack-posts-api",
   "version": "4.0.0",
   "engines": { "node": "24.x" },
-  "dependencies": {}
+  "dependencies": {
+    "busboy": "^1.6.0"
+  }
 }
