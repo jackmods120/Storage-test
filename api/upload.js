@@ -1,8 +1,6 @@
-// api/upload.js — Telegram Storage
+// api/upload.js — Telegram Storage (native fetch/FormData/Blob, Node 24)
 
-module.exports.config = {
-  api: { bodyParser: { sizeLimit: '50mb' } },
-};
+module.exports.config = { api: { bodyParser: { sizeLimit: '50mb' } } };
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -26,8 +24,7 @@ module.exports = async function handler(req, res) {
     const ext        = mimeType.split('/')[1] || 'bin';
     const fileName   = `jack_${Date.now()}.${ext}`;
 
-    // FormData → Telegram
-    const { FormData, Blob, fetch } = await import('undici');
+    // FormData → Telegram (Node 24 has native FormData + Blob)
     const formData = new FormData();
     formData.append('chat_id', CHANNEL_ID);
     const blob = new Blob([buffer], { type: mimeType });
@@ -44,7 +41,7 @@ module.exports = async function handler(req, res) {
 
     const tgRes  = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${endpoint}`, {
       method: 'POST',
-      body: formData,
+      body  : formData,
     });
     const tgData = await tgRes.json();
 
@@ -52,17 +49,17 @@ module.exports = async function handler(req, res) {
       return res.status(500).json({ error: tgData.description || 'Telegram upload failed' });
     }
 
-    const msg    = tgData.result;
-    const fileId = type === 'video' ? msg.video?.file_id : msg.document?.file_id;
-    const thumbId = (type === 'video')
-      ? (msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || null)
-      : null;
+    const msg     = tgData.result;
+    const fileId  = type === 'video' ? msg.video?.file_id : msg.document?.file_id;
+    const thumbId = type === 'video'
+      ? (msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || '')
+      : '';
 
     return res.status(200).json({
-      success: true,
-      file_id: fileId,
-      thumb_id: thumbId,
-      type: type,
+      success   : true,
+      file_id   : fileId,
+      thumb_id  : thumbId,
+      type      : type,
       message_id: msg.message_id,
     });
 

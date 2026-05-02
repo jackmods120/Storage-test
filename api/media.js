@@ -1,4 +1,4 @@
-// api/media.js — Telegram File Proxy
+// api/media.js — Telegram File Proxy (native fetch, Node 24)
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -10,8 +10,6 @@ module.exports = async function handler(req, res) {
   const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
   try {
-    const { fetch } = await import('undici');
-
     const infoRes  = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${id}`);
     const infoData = await infoRes.json();
 

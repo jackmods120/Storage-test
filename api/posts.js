@@ -1,4 +1,4 @@
-// api/posts.js — Firebase RTDB REST
+// api/posts.js — Firebase RTDB (native fetch, Node 24)
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,7 +7,6 @@ module.exports = async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const DB_URL = process.env.FIREBASE_DB_URL || 'https://jack-9a034-default-rtdb.firebaseio.com';
-  const { fetch } = await import('undici');
 
   try {
     if (req.method === 'GET') {
@@ -57,6 +56,7 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
 
   } catch (err) {
+    console.error('Posts error:', err);
     return res.status(500).json({ error: err.message });
   }
 };

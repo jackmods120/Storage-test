@@ -1,4 +1,4 @@
-// api/like.js — Like / Unlike
+// api/like.js — Like/Unlike (native fetch, Node 24)
 
 module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -8,7 +8,6 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
 
   const DB_URL = process.env.FIREBASE_DB_URL || 'https://jack-9a034-default-rtdb.firebaseio.com';
-  const { fetch } = await import('undici');
 
   try {
     const { postId, userId, action } = req.body;
@@ -21,14 +20,26 @@ module.exports = async function handler(req, res) {
     const current    = await currentRes.json();
 
     if (action === 'like') {
-      await fetch(likeRef, { method: 'PUT', body: JSON.stringify(true), headers: { 'Content-Type': 'application/json' } });
+      await fetch(likeRef, {
+        method : 'PUT',
+        body   : JSON.stringify(true),
+        headers: { 'Content-Type': 'application/json' },
+      });
       const newCount = (current || 0) + 1;
-      await fetch(likesRef, { method: 'PUT', body: JSON.stringify(newCount), headers: { 'Content-Type': 'application/json' } });
+      await fetch(likesRef, {
+        method : 'PUT',
+        body   : JSON.stringify(newCount),
+        headers: { 'Content-Type': 'application/json' },
+      });
       return res.status(200).json({ success: true, likes: newCount, liked: true });
     } else {
       await fetch(likeRef, { method: 'DELETE' });
       const newCount = Math.max((current || 1) - 1, 0);
-      await fetch(likesRef, { method: 'PUT', body: JSON.stringify(newCount), headers: { 'Content-Type': 'application/json' } });
+      await fetch(likesRef, {
+        method : 'PUT',
+        body   : JSON.stringify(newCount),
+        headers: { 'Content-Type': 'application/json' },
+      });
       return res.status(200).json({ success: true, likes: newCount, liked: false });
     }
 
