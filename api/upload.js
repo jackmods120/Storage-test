@@ -1,21 +1,10 @@
-// ═══════════════════════════════════════════════════════════
-//  JACK POSTS — api/upload.js
-//  فایل (وێنە/ڤیدیۆ) دەنێرێتە کەناڵی Telegram تایبەت
-//  هەمیشەیی، خۆڕایی، بێ سنووری Storage
-// ═══════════════════════════════════════════════════════════
+// api/upload.js — Telegram Storage
 
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '50mb',
-    },
-  },
+module.exports.config = {
+  api: { bodyParser: { sizeLimit: '50mb' } },
 };
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID; // e.g. -1001234567890
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -24,23 +13,23 @@ export default async function handler(req, res) {
 
   try {
     const { file, type } = req.body;
-    // file  = "data:image/jpeg;base64,/9j/..."  یان  "data:video/mp4;base64,..."
-    // type  = "image"  یان  "video"
-
     if (!file) return res.status(400).json({ error: 'No file provided' });
 
-    // ── ١. base64 → Buffer ──────────────────────────────────
-    const mimeMatch = file.match(/^data:([^;]+);base64,/);
-    const mimeType  = mimeMatch ? mimeMatch[1] : (type === 'video' ? 'video/mp4' : 'image/jpeg');
-    const base64Data = file.replace(/^data:[^;]+;base64,/, '');
-    const buffer    = Buffer.from(base64Data, 'base64');
-    const ext       = mimeType.split('/')[1] || 'bin';
-    const fileName  = `jack_${Date.now()}.${ext}`;
+    const BOT_TOKEN  = process.env.TELEGRAM_BOT_TOKEN;
+    const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
 
-    // ── ٢. ناردن بۆ Telegram ────────────────────────────────
+    // base64 → Buffer
+    const mimeMatch  = file.match(/^data:([^;]+);base64,/);
+    const mimeType   = mimeMatch ? mimeMatch[1] : (type === 'video' ? 'video/mp4' : 'image/jpeg');
+    const base64Data = file.replace(/^data:[^;]+;base64,/, '');
+    const buffer     = Buffer.from(base64Data, 'base64');
+    const ext        = mimeType.split('/')[1] || 'bin';
+    const fileName   = `jack_${Date.now()}.${ext}`;
+
+    // FormData → Telegram
+    const { FormData, Blob, fetch } = await import('undici');
     const formData = new FormData();
     formData.append('chat_id', CHANNEL_ID);
-
     const blob = new Blob([buffer], { type: mimeType });
 
     let endpoint;
@@ -49,7 +38,6 @@ export default async function handler(req, res) {
       formData.append('video', blob, fileName);
       formData.append('supports_streaming', 'true');
     } else {
-      // وێنەکان بە sendDocument دەنێرێن تا کوالیتی بچووک نەبێت
       endpoint = 'sendDocument';
       formData.append('document', blob, fileName);
     }
@@ -61,28 +49,20 @@ export default async function handler(req, res) {
     const tgData = await tgRes.json();
 
     if (!tgData.ok) {
-      console.error('Telegram error:', tgData);
       return res.status(500).json({ error: tgData.description || 'Telegram upload failed' });
     }
 
-    // ── ٣. وەرگرتنی file_id ────────────────────────────────
-    const msg = tgData.result;
-    let fileId, thumbFileId;
-
-    if (type === 'video') {
-      fileId      = msg.video?.file_id;
-      thumbFileId = msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || null;
-    } else {
-      fileId = msg.document?.file_id;
-      // تامبنیل بۆ وێنەکان (ئەگەر لەناو sendPhoto بنێرێت)
-      thumbFileId = msg.document?.thumbnail?.file_id || null;
-    }
+    const msg    = tgData.result;
+    const fileId = type === 'video' ? msg.video?.file_id : msg.document?.file_id;
+    const thumbId = (type === 'video')
+      ? (msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || null)
+      : null;
 
     return res.status(200).json({
-      success   : true,
-      file_id   : fileId,
-      thumb_id  : thumbFileId,
-      type      : type,
+      success: true,
+      file_id: fileId,
+      thumb_id: thumbId,
+      type: type,
       message_id: msg.message_id,
     });
 
@@ -90,4 +70,4 @@ export default async function handler(req, res) {
     console.error('Upload error:', err);
     return res.status(500).json({ error: err.message });
   }
-}
+};
