@@ -1,0 +1,7 @@
+{
+  "name": "jack-posts-api",
+  "version": "2.0.0",
+  "description": "Jack Posts — Telegram Storage + Firebase RTDB — بەخۆڕایی هەمیشەیی",
+  "engines": { "node": "18.x" },
+  "dependencies": {}
+}
