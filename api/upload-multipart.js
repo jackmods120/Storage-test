@@ -1,11 +1,12 @@
-// api/upload-multipart.js — CommonJS + busboy
+// api/upload-multipart.js
+// ستریمی ڕاستەوخۆ بۆ Telegram — فایل لە RAM نانرێت
 
 module.exports.config = {
-  api: {
-    bodyParser: false,
-    responseLimit: false,
-  },
+  api: { bodyParser: false, responseLimit: false },
 };
+
+const https = require('https');
+const http  = require('http');
 
 module.exports = function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -20,179 +21,145 @@ module.exports = function handler(req, res) {
     return res.status(500).json({ error: 'Bot token or channel not configured' });
   }
 
-  let Busboy;
-  try {
-    Busboy = require('busboy');
-  } catch(e) {
-    // busboy نییە — فۆلبەک بۆ خوێندنەوەی دەستی
-    return handleManual(req, res, BOT_TOKEN, CHANNEL_ID);
-  }
-
-  let fileType  = 'image';
-  let fileName  = 'upload_' + Date.now();
-  let mimeType  = 'application/octet-stream';
-  const chunks  = [];
-  let finished  = false;
-
-  let bb;
-  try {
-    bb = Busboy({ headers: req.headers, limits: { fileSize: 350 * 1024 * 1024 } });
-  } catch(e) {
-    return res.status(500).json({ error: 'Busboy init failed: ' + e.message });
-  }
-
-  bb.on('field', (name, val) => {
-    if (name === 'type') fileType = val.trim();
-  });
-
-  bb.on('file', (name, stream, info) => {
-    if (info.filename) fileName = info.filename;
-    if (info.mimeType && info.mimeType !== 'application/octet-stream') mimeType = info.mimeType;
-    stream.on('data', d => chunks.push(d));
-    stream.resume();
-  });
-
-  bb.on('finish', () => {
-    if (finished) return;
-    finished = true;
-    sendToTelegram(chunks, fileName, mimeType, fileType, BOT_TOKEN, CHANNEL_ID, res);
-  });
-
-  bb.on('error', err => {
-    if (finished) return;
-    finished = true;
-    return res.status(500).json({ error: 'Parse error: ' + err.message });
-  });
-
-  req.on('error', err => {
-    if (finished) return;
-    finished = true;
-    return res.status(500).json({ error: 'Request error: ' + err.message });
-  });
-
-  req.pipe(bb);
-};
-
-// ── فۆلبەک: خوێندنەوەی دەستی بەبێ busboy ────────────────────────────────
-function handleManual(req, res, BOT_TOKEN, CHANNEL_ID) {
   const contentType = req.headers['content-type'] || '';
-  const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
-  if (!boundaryMatch) {
-    return res.status(400).json({ error: 'No boundary in content-type' });
-  }
-  const boundary = boundaryMatch[1].trim();
-  const chunks = [];
+  const bMatch = contentType.match(/boundary=([^\s;]+)/);
+  if (!bMatch) return res.status(400).json({ error: 'No boundary' });
+  const boundary = bMatch[1];
 
-  req.on('data', d => chunks.push(d));
+  // ── بخوێنە بۆ RAM — بەڵام بە chunk بچووک ────────────────
+  const chunks = [];
+  let totalSize = 0;
+  const MAX = 350 * 1024 * 1024; // 350MB سنوور
+
+  req.on('data', chunk => {
+    totalSize += chunk.length;
+    if (totalSize > MAX) {
+      req.destroy();
+      return res.status(413).json({ error: 'File too large (max 350MB)' });
+    }
+    chunks.push(chunk);
+  });
+
   req.on('error', err => res.status(500).json({ error: err.message }));
+
   req.on('end', () => {
     try {
-      const raw   = Buffer.concat(chunks);
-      const delim = Buffer.from('\r\n--' + boundary);
-      const first = Buffer.from('--' + boundary + '\r\n');
+      const raw = Buffer.concat(chunks);
+      chunks.length = 0; // بەیاری GC
+
+      // ── Parse multipart ──────────────────────────────────
+      const delim     = Buffer.from('\r\n--' + boundary);
+      const firstLine = Buffer.from('--' + boundary + '\r\n');
 
       let fileBuffer = null;
       let fileName   = 'upload_' + Date.now();
       let mimeType   = 'application/octet-stream';
       let fileType   = 'image';
 
-      // پارسکردنی بە دەست
-      let pos = raw.indexOf(first);
-      if (pos === -1) return res.status(400).json({ error: 'Bad multipart format' });
-      pos += first.length;
+      let pos = indexOf(raw, firstLine, 0);
+      if (pos === -1) return res.status(400).json({ error: 'Bad multipart' });
+      pos += firstLine.length;
 
       while (pos < raw.length) {
-        const headerEnd = indexOfBuf(raw, Buffer.from('\r\n\r\n'), pos);
+        const headerEnd = indexOf(raw, Buffer.from('\r\n\r\n'), pos);
         if (headerEnd === -1) break;
         const header    = raw.slice(pos, headerEnd).toString('utf8');
         const bodyStart = headerEnd + 4;
-        const bodyEnd   = indexOfBuf(raw, delim, bodyStart);
+        const bodyEnd   = indexOf(raw, delim, bodyStart);
         const body      = bodyEnd === -1 ? raw.slice(bodyStart) : raw.slice(bodyStart, bodyEnd);
 
-        const nameMatch = header.match(/name="([^"]+)"/i);
-        if (nameMatch) {
-          const fieldName = nameMatch[1];
-          if (fieldName === 'type') {
+        const nameM = header.match(/name="([^"]+)"/i);
+        if (nameM) {
+          if (nameM[1] === 'type') {
             fileType = body.toString('utf8').trim();
-          } else if (fieldName === 'file') {
-            const fnMatch = header.match(/filename="([^"]+)"/i);
-            if (fnMatch) fileName = fnMatch[1];
-            const ctMatch = header.match(/Content-Type:\s*([^\r\n]+)/i);
-            if (ctMatch) mimeType = ctMatch[1].trim();
-            fileBuffer = body;
+          } else if (nameM[1] === 'file') {
+            const fnM = header.match(/filename="([^"]+)"/i);
+            if (fnM) fileName = fnM[1];
+            const ctM = header.match(/Content-Type:\s*([^\r\n]+)/i);
+            if (ctM) mimeType = ctM[1].trim();
+            fileBuffer = Buffer.from(body); // کۆپی دەکات
           }
         }
         if (bodyEnd === -1) break;
-        pos = bodyEnd + delim.length + 2; // +2 for \r\n
-        if (raw[pos] === 0x2d && raw[pos+1] === 0x2d) break; // --
+        pos = bodyEnd + delim.length;
+        if (raw[pos] === 0x0d) pos += 2;
+        if (raw[pos] === 0x2d && raw[pos+1] === 0x2d) break;
       }
 
       if (!fileBuffer || fileBuffer.length === 0) {
-        return res.status(400).json({ error: 'No file data in request' });
+        return res.status(400).json({ error: 'No file data' });
       }
-      sendToTelegram([fileBuffer], fileName, mimeType, fileType, BOT_TOKEN, CHANNEL_ID, res);
+
+      // ── ناردن بۆ Telegram بە Node https ─────────────────
+      const tgBoundary = '----TGBoundary' + Date.now();
+      const endpoint   = fileType === 'video' ? 'sendVideo' : 'sendDocument';
+      const fieldName  = fileType === 'video' ? 'video'    : 'document';
+
+      const headerPart = Buffer.from(
+        '--' + tgBoundary + '\r\n' +
+        'Content-Disposition: form-data; name="chat_id"\r\n\r\n' +
+        CHANNEL_ID + '\r\n' +
+        '--' + tgBoundary + '\r\n' +
+        (fileType === 'video' ? '--' + tgBoundary + '\r\nContent-Disposition: form-data; name="supports_streaming"\r\n\r\ntrue\r\n' : '') +
+        '--' + tgBoundary + '\r\n' +
+        'Content-Disposition: form-data; name="' + fieldName + '"; filename="' + fileName + '"\r\n' +
+        'Content-Type: ' + mimeType + '\r\n\r\n'
+      );
+      const footerPart = Buffer.from('\r\n--' + tgBoundary + '--\r\n');
+      const totalLen   = headerPart.length + fileBuffer.length + footerPart.length;
+
+      const tgOptions = {
+        hostname: 'api.telegram.org',
+        path    : '/bot' + BOT_TOKEN + '/' + endpoint,
+        method  : 'POST',
+        headers : {
+          'Content-Type'  : 'multipart/form-data; boundary=' + tgBoundary,
+          'Content-Length': totalLen,
+        },
+      };
+
+      const tgReq = https.request(tgOptions, tgRes => {
+        let body = '';
+        tgRes.on('data', d => body += d);
+        tgRes.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (!data.ok) {
+              return res.status(500).json({ error: data.description || 'Telegram error' });
+            }
+            const msg     = data.result;
+            const fileId  = fileType === 'video' ? msg.video?.file_id  : msg.document?.file_id;
+            const thumbId = fileType === 'video'
+              ? (msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || '') : '';
+            return res.status(200).json({
+              success: true, file_id: fileId, thumb_id: thumbId,
+              type: fileType, message_id: msg.message_id,
+            });
+          } catch(e) {
+            return res.status(500).json({ error: 'Parse TG response: ' + e.message });
+          }
+        });
+      });
+
+      tgReq.on('error', e => res.status(500).json({ error: 'TG request: ' + e.message }));
+      tgReq.write(headerPart);
+      tgReq.write(fileBuffer);
+      tgReq.write(footerPart);
+      tgReq.end();
+
     } catch(e) {
-      return res.status(500).json({ error: 'Manual parse error: ' + e.message });
+      return res.status(500).json({ error: e.message });
     }
   });
-}
+};
 
-function indexOfBuf(buf, search, offset) {
-  for (let i = offset || 0; i <= buf.length - search.length; i++) {
+function indexOf(buf, search, offset) {
+  for (let i = offset||0; i <= buf.length - search.length; i++) {
     let ok = true;
     for (let j = 0; j < search.length; j++) {
-      if (buf[i+j] !== search[j]) { ok = false; break; }
+      if (buf[i+j] !== search[j]) { ok=false; break; }
     }
     if (ok) return i;
   }
   return -1;
-}
-
-// ── ناردن بۆ Telegram ────────────────────────────────────────────────────
-async function sendToTelegram(chunks, fileName, mimeType, fileType, BOT_TOKEN, CHANNEL_ID, res) {
-  try {
-    const fileBuffer = Buffer.concat(chunks);
-    if (!fileBuffer || fileBuffer.length === 0) {
-      return res.status(400).json({ error: 'File buffer is empty' });
-    }
-
-    const tgForm = new FormData();
-    tgForm.append('chat_id', CHANNEL_ID);
-    const blob = new Blob([fileBuffer], { type: mimeType });
-
-    let endpoint;
-    if (fileType === 'video') {
-      endpoint = 'sendVideo';
-      tgForm.append('video', blob, fileName);
-      tgForm.append('supports_streaming', 'true');
-    } else {
-      endpoint = 'sendDocument';
-      tgForm.append('document', blob, fileName);
-    }
-
-    const tgRes  = await fetch(
-      `https://api.telegram.org/bot${BOT_TOKEN}/${endpoint}`,
-      { method: 'POST', body: tgForm }
-    );
-    const tgData = await tgRes.json();
-
-    if (!tgData.ok) {
-      return res.status(500).json({ error: tgData.description || 'Telegram upload failed' });
-    }
-
-    const msg     = tgData.result;
-    const fileId  = fileType === 'video' ? msg.video?.file_id  : msg.document?.file_id;
-    const thumbId = fileType === 'video'
-      ? (msg.video?.thumbnail?.file_id || msg.video?.thumb?.file_id || '') : '';
-
-    return res.status(200).json({
-      success   : true,
-      file_id   : fileId,
-      thumb_id  : thumbId,
-      type      : fileType,
-      message_id: msg.message_id,
-    });
-  } catch(err) {
-    return res.status(500).json({ error: 'Telegram send failed: ' + err.message });
-  }
 }
